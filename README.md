@@ -1,5 +1,5 @@
 # ames_housing
-Predicting Sale Prices of Houses in Ames, Iowa
+Predicting Sale Prices of Houses in Ames, Iowa using Kaggle Dataset
 
 ## Rmd Files
 - First Rmd file is for Data Cleaning and Visualisation
