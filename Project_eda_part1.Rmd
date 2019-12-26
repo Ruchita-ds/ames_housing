@@ -1,5 +1,5 @@
 ---
-title: 'Assignment 1-3 : Data Cleaning & Visualization'
+title: 'Assignment 1-2 : Data Cleaning & Visualization'
 author: "Ruchita Desai, Gaurav Tyagi"
 output:
   word_document: default
@@ -24,8 +24,8 @@ Reading 'train' and 'test' files.
 Train has 1460 observations and 81 variables.
 Test has 1459 observations and 80 variables.
 ```{r}
-train <- read.csv("~/Desktop/FinalRfile/r_files/Input_files_part1/train.csv", stringsAsFactors = FALSE)
-test <- read.csv("~/Desktop/FinalRfile/r_files/Input_files_part1/test.csv", stringsAsFactors = FALSE)
+train <- read.csv("/train.csv", stringsAsFactors = FALSE)
+test <- read.csv("/test.csv", stringsAsFactors = FALSE)
 ```
 Taking a look at all the column names
 ```{r}
