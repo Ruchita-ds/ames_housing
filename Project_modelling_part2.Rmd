@@ -1,5 +1,5 @@
 ---
-title: 'Assignment 4 : 'Predictive Modeling'
+title: 'Part 2-2 : 'Predictive Modelling'
 author: "Ruchita Desai, Gaurav Tyagi"
 output:
   html_document: default
@@ -23,7 +23,7 @@ library(gplots)
 ## 1 : Getting the cleaned data
 
 ```{r}
-ames_cleaned = read.csv("~/Desktop/FinalRfile/r_files/Input_modelling_file_part2/ames_cleaned.csv")
+ames_cleaned = read.csv("/ames_cleaned.csv")
 ames_cleaned$X <- NULL
 Id <- ames_cleaned$Id
 ames_cleaned$Id <- NULL
