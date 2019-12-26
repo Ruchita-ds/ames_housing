@@ -1,0 +1,284 @@
+---
+title: 'Assignment 4 : 'Predictive Modeling'
+author: "Ruchita Desai, Gaurav Tyagi"
+output:
+  html_document: default
+  word_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(scales)
+library(corrplot)
+library(psych)
+library(dplyr)
+library(skimr)
+library(gridExtra)
+library(modelr)
+library(base)
+library(gplots)
+```
+
+## 1 : Getting the cleaned data
+
+```{r}
+ames_cleaned = read.csv("~/Desktop/FinalRfile/r_files/Input_modelling_file_part2/ames_cleaned.csv")
+ames_cleaned$X <- NULL
+Id <- ames_cleaned$Id
+ames_cleaned$Id <- NULL
+```
+
+###2 : Using Linear Regression to understand Initial Modelling
+
+```{r}
+fit<-lm(SalePrice~., data=ames_cleaned) #run a multiple linear regression model (lm) on the training data
+summary(fit)
+```
+Observation: 
+
+Residual standard error: 23430 on 1245 degrees of freedom
+  (1459 observations deleted due to missingness)
+Multiple R-squared:  0.9258,	Adjusted R-squared:  0.9132 
+F-statistic: 73.27 on 212 and 1245 DF,  p-value: < 2.2e-16
+
+
+R-squred of 0.9258 tells us that approximately 92.58% of variation in sale price can be explained by my model.
+
+F-statistics and p-value show the overall significance test of my model.
+
+Residual standard error gives an idea on how far observed sale price are from the predicted or fitted sales price.
+
+Intercept is the estimated sale price for a house with all the other variables at zero. It does not provide any meaningful interpretation.
+
+### 3 : Dropping highly correlated variables
+
+As almost 8 features did showed as NA, there is an issue with multicollinearity 
+So, Dropping highly corellated variables which were found through the Corrplot and running the model again
+Collinearity Issue 
+1. Removing YearRemodAdd as new House variable created
+2. GarageCars V/s GarageArea
+3. TotalBsmtSF V/s X1stFlrSF
+4. GrLivArea V/s TotRmsAbvGrd
+5. YrBuilt V/s GarageYrBlt
+6. YrBuilt V/s YearRemodAdd & GarageYrBlt V/s YearRemodAdd
+7. Garage Quality and Garage Condition are collinear
+8. TotBaths - FullBath + HalfBath*0.5 + BsmtFullBath + BsmtHalfBath*0.5
+9. GrLivArea = X1stFlrSF + X2ndFlrSF + LowQualFinSF
+10.TotalBsmtSF = BsmtFinSF1 + BsmtFinSF2 +BsmtUnfSF
+11.TotalPorchSF <- OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch
+12.TotalSqFt <- GrLivArea + TotalBsmtSF
+
+```{r}
+dim(ames_cleaned)
+drop_vars <- c('YearRemodAdd', 'GarageArea', 'GarageCond', 'GrLivArea','X1stFlrSF', 'X2ndFlrSF', 'LowQualFinSF','GarageYrBlt', 'FullBath', 'HalfBath', 'BsmtFullBath', 'BsmtHalfBath', 'OpenPorchSF', 'EnclosedPorch', 'X3SsnPorch', 'ScreenPorch', 'TotalBsmtSF','BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF','SalePrice' )
+
+ames_final<- ames_cleaned[ ,!(names(ames_cleaned) %in% drop_vars)]
+dim(ames_final)
+```
+Total 64 variables remaining
+
+### 4 : Finding Factor and Numerical Variables
+
+```{r}
+# List of numerical variables
+num.var <- ames_final %>% 
+  select_if(is.numeric) %>%
+  names 
+print(num.var)
+# List of categorical variables
+cat.vars <- ames_final %>% 
+  select_if(negate(is.numeric)) %>% 
+  names 
+print(cat.vars)
+cat('There are', length(num.var), 'numeric variables, and', length(cat.vars), 'factor variables')
+
+# There are 42 numeric variables and 22 factor variables
+
+#Getting variable names into the dataframe
+# numerical variables only
+df.num <- ames_final[, num.var] 
+# categorical variables only
+df.cat <- ames_final[, cat.vars] 
+```
+
+### 5 : One Hot Encoding of Categorical Variables
+
+All categorical predictors are converted into numeric columns
+```{r}
+df.dummy <- as.data.frame(model.matrix(~.-1, df.cat))
+dim(df.dummy)
+```
+
+### 6 : Combining numerical variables with one-hot-encoded dummy variables
+```{r}
+df.ames <- cbind(df.num, df.dummy)
+dim(df.ames)
+```
+
+### 7 : Removing levels with few or no observations in train or test
+
+```{r}
+
+# Drop near-zero-variance perdictors
+nzv.data <- nearZeroVar(df.ames, saveMetrics = TRUE)
+drop.cols <- rownames(nzv.data)[nzv.data$nzv == TRUE]
+print(drop.cols)
+df.ames <- df.ames[,!names(df.ames) %in% drop.cols]
+dim(df.ames)
+```
+
+### 8 : Dealing with Skewness of Response variable
+
+```{r}
+skew(ames_cleaned$SalePrice)
+
+qqnorm(ames_cleaned$SalePrice) 
+qqline(ames_cleaned$SalePrice)
+
+par(mfrow=c(1,1))
+y_train_log <- log(ames_cleaned$SalePrice[!is.na(ames_cleaned$SalePrice)])
+summary(y_train_log)
+
+#skewness is reduced
+skew(y_train_log)
+qqnorm(y_train_log)
+qqline(y_train_log)
+```
+
+
+### 9 : Splitting data into test and train finally
+
+```{r}
+dim(df.ames)
+df.ames$Id <- Id
+summary(df.ames$Id)
+x_train <- df.ames[df.ames$Id<=1460, ]
+dim(x_train)
+x_test <- df.ames[df.ames$Id>1460, ]
+dim(x_test)
+id_train <-  x_train$Id 
+id_test <- x_test$Id
+x_train$Id <- NULL
+x_test$Id <- NULL
+```
+
+### 10 : Running linear model with all variables
+```{r}
+train.df <- cbind(x_train, y_train_log)
+fit1<-lm(y_train_log~. , train.df) 
+#run a multiple linear regression model (lm) on the training data
+summary(fit1)
+```
+Observations: 
+Residual standard error: 0.1168 on 1377 degrees of freedom
+Multiple R-squared:  0.9192,	Adjusted R-squared:  0.9145 
+F-statistic: 195.9 on 80 and 1377 DF,  p-value: < 2.2e-16
+
+
+### 11 :  Using the Caret Package to perform  variable importance
+
+```{r}
+#R has a caret package which includes the varImp() function to calculate important features of almost all models.
+impFeatures_1 <- varImp(fit1)
+impFeatures_1
+?varImp()
+imp_names <- rownames(impFeatures_1)
+imp_names
+VarImp2 <- data.frame(Variables = row.names(impFeatures_1), Overall = impFeatures_1[,1])
+VarImp2 <- VarImp2[order(impFeatures_1$Overall, decreasing = TRUE),]
+write.csv(VarImp2, "imp_features_ln.csv")
+
+ggplot(VarImp2[1:15,], aes(x=reorder(Variables, Overall), y=Overall, fill=Overall)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Variables', y= 'Overall Ranking') + 
+  coord_flip() + 
+  theme(legend.position="none")+
+  ggtitle("Top 15 important variables")
+
+```
+
+### 12 : Running linear model again with top 15 important variables
+```{r}
+fit2<-lm(y_train_log~TotalSqFt+OverallQual+OverallCond+TotBaths+SaleConditionNormal+GarageCars+
+           Condition1Norm+BsmtFinType1+TotalPorchSF+MSZoningRL+CentralAir+NeighborhoodSomerst+
+           BsmtExposure+`Exterior1stWd Sdng`, data=train.df) 
+#run a multiple linear regression model (lm) on the training data
+summary(fit2)
+dim(x_test)
+```
+Residual standard error: 0.1346 on 1443 degrees of freedom
+Multiple R-squared:  0.8877,	Adjusted R-squared:  0.8866 
+F-statistic: 814.6 on 14 and 1443 DF,  p-value: < 2.2e-16
+
+### 13 : Predict on x_test
+```{r}
+#use the "fit" model to predict prices for the prediction data
+predicted.prices<-predict(fit2, x_test) 
+# transform back
+predicted.prices.exp <- exp(predicted.prices) 
+# check the first few predictions
+head(predicted.prices.exp) 
+
+# Creat submission file from 
+pred_ln <- data.frame(Id =id_test, SalePrice = predicted.prices.exp)
+write.csv(pred_ln, file = 'ln_submission.csv', row.names = F)
+#RMSE 0.14414 on Kaggle board
+```
+
+### 14 : Predicting with Random Forest
+
+Finding variable importance with Random Forest 
+```{r}
+# Getting an overview of the most important variables including categorical variables
+# Random Forest model with 100 trees.
+
+library(randomForest)
+set.seed(2019)
+model_forest<- randomForest(x=x_train, y=y_train_log, ntree=300,importance=TRUE)
+model_forest
+# number of trees with lowest MSE
+which.min(model_forest$mse)
+## [1] 300
+# MSE of this optimal random forest
+sqrt(model_forest$mse[which.min(model_forest$mse)])
+## [1] 0.1300156
+#Plotting Important Variables in Random Forest
+rf_impvar <- importance(model_forest) 
+rf_impvar
+
+varImpPlot(model_forest)#Variable importance plot 
+#Using GGPlot to find important variables
+rfdf_imp<- data.frame(Variables = row.names(rf_impvar), MSE = rf_impvar[,1])
+rfdf_imp <- rfdf_imp[order(rfdf_imp$MSE, decreasing = TRUE),]
+write.csv(rfdf_imp, "RF_impvar.csv")
+getwd()
+
+ggplot(rfdf_imp[1:15,], aes(x=reorder(Variables, MSE), y=MSE, fill=MSE)) + 
+  geom_bar(stat = 'identity') + 
+  labs(x = 'Variables', y= '% increase MSE if variable is randomly permuted') + 
+  coord_flip() + 
+  theme(legend.position="none")+
+  ggtitle("Top 15 important variables")
+
+# Mean Decrease Accuracy (%IncMSE) and Mean Decrease Gini (IncNodePurity) (sorted decreasingly from top to bottom) of attributes as assigned by the random forest
+
+fit_rf<- randomForest(y_train_log~TotalSqFt+OverallQual+LotArea+TotBaths+GarageCars+
+                        OverallCond+YearBuilt+HAge+FireplaceQu+TotRmsAbvGrd+BsmtFinType1+
+                        KitchenQual+MSZoningRM+ExterQual+Fireplaces, data=x_train)
+fit_rf
+predicted.prices.rf <- predict(fit_rf, x_test)
+exp_pr_rf <- exp(predicted.prices.rf)
+# Creat submission file from 
+exp_pr_rf <- data.frame(Id =id_test, SalePrice = exp_pr_rf)
+head(exp_pr_rf)
+write.csv(exp_pr_rf, file = 'rf_submission.csv', row.names = F)
+#0.139 RMSE on Kaggle board
+#Reading actual values from submission
+y_actual <- read.csv("sample_submission.csv")
+getwd()
+y_test <- y_actual$SalePrice
+RMSE   = RMSE(exp_pr_rf$SalePrice, y_test)
+
+```
+

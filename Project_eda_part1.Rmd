@@ -1,0 +1,1722 @@
+---
+title: 'Assignment 1-3 : Data Cleaning & Visualization'
+author: "Ruchita Desai, Gaurav Tyagi"
+output:
+  word_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(scales)
+library(corrplot)
+library(psych)
+library(dplyr)
+library(skimr)
+library(gridExtra)
+```
+
+## Part-1
+
+### 1. Loading AMES Housing dataset
+
+Reading 'train' and 'test' files.
+Train has 1460 observations and 81 variables.
+Test has 1459 observations and 80 variables.
+```{r}
+train <- read.csv("~/Desktop/FinalRfile/r_files/Input_files_part1/train.csv", stringsAsFactors = FALSE)
+test <- read.csv("~/Desktop/FinalRfile/r_files/Input_files_part1/test.csv", stringsAsFactors = FALSE)
+```
+Taking a look at all the column names
+```{r}
+colnames(train)
+```
+
+Merging train and test to clean the data. Also, creating the SalePrice column in Test dataset and providing NA as its values to make the number of columns same in train and test dataset i.e. 81.
+```{r}
+test$SalePrice <- NA 
+```
+Storing test variable 'Id' in a vector to be used when partitioning the data again
+```{r}
+test_labels <- test$Id
+```
+
+Checking dimensions of train dataset
+```{r}
+dim(train)
+```
+Checking dimesnions of test dataset
+```{r}
+dim(test)
+```
+Combining train and test data for Data cleaning and visualization resulting in 2919 observations and 79 variables
+Dropping 'Id' and 'SalePrice' variables from the combined dataset making total variables to 79
+```{r}
+
+ames<- rbind(train, test)
+labels <- ames$Id
+ames<- ames[,-1]
+dim(ames)
+SalePrice <- ames$SalePrice
+
+dim(ames)
+# ames <- cbind(ames, saleprice)
+#dim(ames)
+# summary(salePrice)
+# ames <- rbind(within(train, rm('Id', 'SalePrice')), within(test, rm('Id', 'SalePrice')))
+```
+Using skim function, we can see that there are 43 character variables and 37 numerical variables. Also we can see missing values in each variable and we can see histogram of 37 numerical variables. Also it is visible that most of the Sq. Ft. variables are skewed right.
+
+Column type frequency:               
+  character                43        
+  numeric                  37  
+There are 37 numeric variables in the dataset including SalePrice. We can see from the summary that the MSSubclass is actually a categorical variables with values representing the category. Also, OverallQual and OverallCond are ordinal variables. Other Bath, Kitchen, GarageCars variables are also nominal. We will further analyse each in the coming steps. 
+
+
+Exploring the response variable 'SalePrice'
+
+```{r}
+summary(SalePrice)
+```
+The summary of SalePrice shows that the SalePrice of a majority of houses is between USD150,000 to USD200,000. But, the maximum price shows considerable increase to 755,000. The NA's are from the test dataset.
+
+Plotting histogram of SalePrice.
+```{r}
+ggplot((data=train), mapping=aes(x=SalePrice)) +
+  geom_histogram(fill="orange", color="red", binwidth = 10000) +
+  scale_x_continuous(breaks= seq(10000, 800000, by=100000), labels = comma) +
+  ggtitle("Distribution of Sale Prices \n of Houses in Ames, IA") +
+  xlab("Sale Prices ($)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The histogram clearly brings out that the SalePrice variable is rightly skewed.Also, there are data points with extreme values. 
+
+Now, visualizing the SalePrice after logarithimic transformation.
+```{r}
+ggplot((data=train), mapping=aes(x=SalePrice)) +
+  geom_histogram(fill="blue", color="cyan", binwidth = 10000) +
+  scale_x_continuous(breaks= seq(10000, 800000, by=100000), labels = comma) +
+  coord_trans(x = "log1p") +
+  ggtitle("Distribution of Sale Prices \n of Houses in Ames, IA") +
+  labs(x="Log of Sale Price") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+We can see that after log(SalePrice), the data is more normally distrubuted. Hence, prior to modelling we will transform SalePrice to the log scale. 
+
+In the data cleaning process, next,finding numerical variables out of 80 predictor variables
+```{r}
+ames_numvector <- which(sapply(ames, is.numeric)) #index vector numeric variables
+ames_num <- ames[, ames_numvector]
+#Saving numeric vector to be used later on
+Names_num <- names(ames_num) # There are 37 numeric variables 
+```
+
+### 2. Running a quick Corrplot for important numerical variables
+
+```{r}
+correlations_num <- cor(ames_num, use="pairwise.complete.obs") 
+#Sort on decreasing correlations with SalePrice
+cor_num_sorted <- as.matrix(sort(correlations_num[,'SalePrice'], decreasing = TRUE)) 
+#select only high corelations with correlation more than 0.5
+CorHigh <- names(which(apply(cor_num_sorted, 1, function(x) abs(x)>0.5)))
+#Finding numerical variables with high correlation with Sale price
+correlations_num <- correlations_num[CorHigh, CorHigh]
+corrplot.mixed(correlations_num, tl.col="black", tl.pos = "lt", 
+               tl.cex =0.8, cl.cex =0.5, number.cex =.8) 
+```
+From the corrplot, we can see that Highest correlation with SalePrice is OverallQual(0.79), GrLivArea(0.71) and GarageCars(0.64). Altogether, there are 10 highly correlated variables. 
+Also, Multicollinearity exists as 
+GarageArea and GarageCars have 0.89,
+X1stFlrSF and TotalBsmtSF have 0.8, 
+TotRmsAbvGrd and GrLivArea have 0.81 and
+YearBuilt and YearRemodAdd have 0.61 as correlations. 
+For modelling, we will have to remove one of the variable from above these collinear predictor variables. 
+
+## Part-2 : Missing value analysis
+
+### 2.1 Sorting the columns having NA values as per their number of NA values
+```{r}
+
+#ames$SalePrice <- NULL # Removing SalePrice from the model for further analysis
+names(ames)
+NAcol <- which(colSums(is.na(ames)) > 0)
+Na_values <- sort(colSums(sapply(ames[NAcol], is.na)), decreasing = TRUE)
+write.csv(Na_values, "Navalues.csv", row.names = TRUE)
+# There are 35 columns having NA values.
+# We will be handling the NA values as per group of variables or individually, whichever possible.
+# 
+# First, handling all the Pool variables together as PoolQC has 2909 NAs.
+```
+### 2.2  Pool Variables
+```{r}
+str(ames$PoolQC) # PoolQC: Pool quality
+table(ames$PoolQC) # From Data Dictionary, Ex-Excellent, Gd-Good, TA-Average/Typical, Fa-Fair, NA-No Pool
+
+```
+The 2909 NAs are houses having No Pool. 
+
+```{r}
+ames$PoolQC[is.na(ames$PoolQC)] <- 'None'
+table(ames$PoolQC)
+
+```
+
+Also, it is an ordinal variable. So, label encoding the values to numerical quality vector. These quality indicators may be used with other variables too with same ordinal values.
+
+```{r}
+library(plyr)
+Quality <- c('None'=0, 'Po'=1, 'Fa'=2, 'TA'=3, 'Gd'=4, 'Ex'=5 )
+ames$PoolQC<-as.integer(revalue(ames$PoolQC, Quality))
+table(ames$PoolQC)
+
+```
+
+The second variable relating to Pools is Pool Area. There are 3 variables in Pool Area which have '0' value in PoolQC. Therefore, imputing these values of PoolQC based on Overall Quality of the house. 
+```{r}
+str(ames$PoolArea)
+table(ames$PoolArea, ames$PoolQC)
+ames[ames$PoolArea>0 & ames$PoolQC==0, c('PoolArea', 'PoolQC', 'OverallQual')]
+ames$PoolQC[2421] <- 2 # Imputing individual value based on Overall quality of the house.
+ames$PoolQC[2504] <- 3
+ames$PoolQC[2600] <- 2
+table(ames$PoolArea, ames$PoolQC) # Now, there are No Pools in 2906 houses.
+```
+
+### 2.3  MiscFeature : Miscellaneous feature not covered in other categories
+There are 2814 missing values in MiscFeature
+```{r}
+str(ames$MiscFeature)
+count(is.na(ames$MiscFeature))
+table(ames$MiscFeature)
+```
+Substituting 'None' for NA values and converting to factors.
+```{r}
+ames$MiscFeature[is.na(ames$MiscFeature)] <- 'None'
+ames$MiscFeature <- as.factor(ames$MiscFeature)
+table(ames$MiscFeature)
+ggplot(data = ames) + geom_bar(mapping=aes(x=MiscFeature))+ guides(fill=FALSE)
+
+ggplot(data = ames, mapping = aes(x = MiscFeature, y = SalePrice, fill=MiscFeature)) +  geom_boxplot()+  guides(fill=FALSE)+ scale_fill_brewer(palette="PiYG")+
+  ggtitle("Miscellaneous Features V/s Sale Price ($)") +
+  labs(x="Miscellaneous Features") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+
+```
+Most of the MiscFeature are None Values. Most of the houses having higher prices have no MiscFeature.
+
+### 2.4 Alley : Type of alley access to property
+```{r}
+table(ames$Alley) # Values are not ordinal.
+count(is.na(ames$Alley))# 2721 NA values. NA = No alley access, as per Data Dictionary
+ames$Alley[is.na(ames$Alley)] <- 'None' # Substituting 'None' for NA values
+ames$Alley <- as.factor(ames$Alley) # Converting to 'Factors'
+str(ames$Alley) # Converted to 3 factor levels
+table(ames$Alley)
+```
+
+### 2.5 Fence : Fence Quality
+```{r}
+# GdPrv	Good Privacy, MnPrv	Minimum Privacy, GdWo	Good Wood, MnWw	Minimum Wood/Wire, NA	No Fence
+ames$Fence[is.na(ames$Fence)] <- 'None' # Substituting 'None' for NA values
+table(ames$Fence)
+```
+
+Checking Fence Quality w.r.t SalePrice. To check if variable is ordinal or not.
+```{r}
+ames[!is.na(ames$SalePrice),] %>% 
+  dplyr::group_by(Fence) %>% 
+  dplyr::summarise(median = median(SalePrice), n=n())
+```
+As median SalePrice is highest for No Fence, therefore, this variable does not seem ordinal. So, converting it to factor.
+```{r}
+ames$Fence <- as.factor(ames$Fence)
+str(ames$Fence)
+table(ames$Fence)
+ggplot(data = ames) + geom_bar(mapping=aes(x=Fence, fill=Fence))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Fence Type")
+```
+
+### 2.6 Fireplace Quality and Number of Fireplaces
+  + Fireplace Quality
+  
+```{r}
+sum(is.na(ames$FireplaceQu)) # 1420 NA value in Fireplace quality
+table(ames$FireplaceQu) # Ordinal variable
+ames$FireplaceQu[is.na(ames$FireplaceQu)] <- 'None'
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(FireplaceQu), fill=as.factor(FireplaceQu)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Fireplace Quality")
+
+ggplot(data = ames, mapping = aes(x = as.factor(FireplaceQu), y = SalePrice, fill=as.factor(FireplaceQu))) +  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Fireplace Quality V/s Sale Price ($)") +labs(x="Fireplace Quality") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+ames$FireplaceQu<-as.integer(revalue(ames$FireplaceQu, Quality)) 
+
+# Using Quality vector
+table(ames$FireplaceQu)
+
+```
+  + Number of Fireplaces
+  
+```{r}
+table(ames$Fireplaces) # No missing value and integer values
+table(ames$Fireplaces, ames$FireplaceQu)
+sum(table(ames$Fireplaces)) # All 2919 values
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(Fireplaces), fill=as.factor(Fireplaces)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Fire Places")
+
+ggplot(data = ames, mapping = aes(x = as.factor(Fireplaces), y = SalePrice, fill=as.factor(Fireplaces))) +  geom_boxplot()+  guides(fill=FALSE)+ 
+ggtitle("Fire Places V/s Sale Price ($)") +labs(x="Fire Places") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+summary(ames$Fireplaces)
+```  
+
+### 2.7 Lot variables
+  + LotFrontage: Linear feet of street connected to property
+
+```{r}
+sum(is.na(ames$LotFrontage))  # 486 missing values
+class(ames$LotFrontage) # integer
+summary(ames$LotFrontage)
+```
+
+* Using MICE package for imputation *
+
+```{r}
+library(mice)
+Lotvar <- ames[, c("LotFrontage","LotShape", "LotArea", "LotConfig")]
+head(Lotvar)
+md.pattern(Lotvar)
+library(VIM)
+aggr_plot <- aggr(Lotvar, col=c('navyblue','red'), numbers=TRUE, 
+                  sortVars=TRUE, labels=names(Lotvar),
+                  cex.axis=.7, gap=3, 
+                  ylab=c("Histogram of missing data","Pattern"))
+```
+
+Checking missing values
+```{r}
+sapply(Lotvar, function(x) sum(is.na(x)))
+```
+
+Converting to factors
+```{r}
+Lotvar <- Lotvar %>%
+  mutate(
+    LotShape = as.factor(LotShape),
+    LotConfig = as.factor(LotConfig)
+  )
+head(Lotvar)
+```
+
+Imputing values
+```{r}
+init = mice(Lotvar, maxit=0) 
+meth = init$method
+predM = init$predictorMatrix
+meth[c("LotFrontage")]="norm"
+set.seed(103)
+imputed_lot = mice(Lotvar, method=meth, predictorMatrix=predM, m=5)
+imputed_lot <- complete(imputed_lot)
+sapply(imputed_lot, function(x) sum(is.na(x))) # No NA values now
+str(imputed_lot)
+ames$LotFrontage <- floor(imputed_lot$LotFrontage)
+sum(is.na(ames$LotFrontage)) # No NA values now in LotFrontage
+summary(ames$LotFrontage)
+class(ames$LotFrontage)
+
+ggplot(data=ames) + geom_point(mapping=aes(x=LotFrontage, y=SalePrice), colour="navy blue", alpha=0.5)+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)+
+  ggtitle("Lot Frontage V/s Sale Price ($)") +labs(x="Lot Frontage", y="Sale Price ($)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+  + LotArea: Lot size in square feet
+
+```{r}
+summary(ames$LotArea)
+class(ames$LotArea)
+
+ggplot((data=train), mapping=aes(x=LotArea)) +
+  geom_histogram(fill="blue", color="cyan", binwidth = 10000)  +
+  ggtitle("Lot Area of Houses in Ames, IA") +
+  labs(x="Lot Area in sq. ft.") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(data=ames) + geom_point(mapping=aes(x=log(LotArea), y=log(SalePrice)), colour="red", alpha=0.8)+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)+
+  ggtitle("Lot Area V/s Sale Price ($)") +labs(x="Lot Area in sq. ft.", y="Sale Price ($)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#There are no NA values and all values are integers.
+``` 
+
+  + LotShape: General shape of property
+
+```{r}
+# Reg	Regular, IR1	Slightly irregular, IR2	Moderately Irregular, IR3	Irregular
+ames$LotShape<-as.integer(revalue(ames$LotShape, c('IR3'=0, 'IR2'=1, 'IR1'=2, 'Reg'=3)))
+table(ames$LotShape)
+sum(table(ames$LotShape)) # All 2919 values
+class(ames$LotShape) # integers
+``` 
+
+  + LotConfig: Lot configuration
+
+```{r}
+# Inside	Inside lot, Corner	Corner lot, CulDSac	Cul-de-sac, FR2	Frontage on 2 sides of property, FR3	Frontage on 3 sides of property
+
+table(ames$LotConfig) # No NAs
+ames$LotConfig <- as.factor(ames$LotConfig) # Converting to factors
+sum(table(ames$LotConfig)) # All 2919 values
+class(ames$LotConfig)
+```
+
+### 2.8 Garage variables
+
+```{r}
+sapply(ames[, c("GarageType","GarageArea", "GarageYrBlt", "GarageCars", "GarageCond", "GarageFinish",
+                "GarageQual")],function(x) sum(is.na(x))) # Finding NA values in all Garage variables
+
+sum(is.na(ames$GarageYrBlt))
+# Replacing NA values in GarageYrBlt by YearBuilt values
+
+ames$GarageYrBlt[is.na(ames$GarageYrBlt)] <- ames$YearBuilt[is.na(ames$GarageYrBlt)]
+``` 
+
+```{r}
+length(which(is.na(ames$GarageType) & is.na(ames$GarageFinish) & 
+               is.na(ames$GarageCond) & is.na(ames$GarageQual)))
+# Checking whether 157 NAs of GarageType are common in other 3 variables as well.
+# GarageType(157 NAs), GarageFinish(159 NAs), GarageCond(159NAs), GarageQual(159NAs)
+# Finding 2 additional NAs as well
+library(GGally)
+library(knitr)
+kable(ames[!is.na(ames$GarageType) & is.na(ames$GarageFinish), 
+          c('GarageCars', 'GarageArea', 'GarageType', 'GarageCond', 'GarageQual', 'GarageFinish')])
+``` 
+# Row number 2127 has GarageArea, therefore we can impute other values. 
+# Row number 2577 has no other values. Therefore, it can be changed to 'No Garage' from NA.
+# Now 158 NAs in Garage variables.
+
+Imputing row 2127 with Modes for GarageCond, GarageQual and GarageFinish
+```{r}
+ames$GarageCond[2127] <- names(sort(-table(ames$GarageCond)))[1]
+ames$GarageQual[2127] <- names(sort(table(ames$GarageQual), decreasing=TRUE))[1]
+ames$GarageFinish[2127] <- names(sort(-table(ames$GarageFinish)))[1]
+kable(ames[2127, c('GarageYrBlt', 'GarageCars', 'GarageArea', 'GarageType', 
+                   'GarageCond', 'GarageQual', 'GarageFinish')])
+``` 
+Data cleaning in Row 2577
+```{r}
+ames$GarageCars[2577] <- 0
+ames$GarageArea[2577] <- 0
+ames$GarageType[2577] <- NA
+length(which(is.na(ames$GarageType) & is.na(ames$GarageFinish) & 
+               is.na(ames$GarageCond) & is.na(ames$GarageQual)))
+# Total 158 NAs now
+``` 
+  + GarageType: Garage location
+  
+```{r}
+# 2Types:	More than one type of garage, Attchd:	Attached to home, Basment:	Basement Garage, BuiltIn:	Built-In (Garage part of house - typically has room above garage), CarPort:	Car Port, Detchd:	Detached from home, NA:	No Garage
+# The values are categorical. So, converting into factors.
+ames$GarageType[is.na(ames$GarageType)] <- 'No Garage'
+ames$GarageType <- as.factor(ames$GarageType)
+table(ames$GarageType)
+``` 
+ 
+  + GarageFinish: Interior finish of the garage
+
+```{r}
+# Fin	Finished, RFn	Rough Finished, Unf	Unfinished, NA	No Garage
+#Values are ordinal
+ames$GarageFinish[is.na(ames$GarageFinish)] <- "None"
+Finish <- c('None'=0, 'Unf'=1, 'RFn'=2, 'Fin'=3)
+ames$GarageFinish <- as.integer(revalue(ames$GarageFinish,replace = Finish))
+table(ames$GarageFinish)
+```  
+
+  + GarageQual: Garage quality
+  
+```{r}
+# Ex	Excellent, Gd	Good, TA	Typical/Average, Fa	Fair, Po	Poor, NA	No Garage
+# Values are ordinal, can be replaced with Quality vector
+ames$GarageQual[is.na(ames$GarageQual)] <- "None"
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(GarageQual), fill=as.factor(GarageQual)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Garage Quality")
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(OverallQual), fill=as.factor(OverallQual)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Overall Quality")
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(OverallCond), fill=as.factor(OverallCond)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Overall Condition")
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(ExterQual), fill=as.factor(ExterQual)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="External Quality")
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(KitchenQual), fill=as.factor(KitchenQual)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Kitchen Quality")
+
+ggplot(data = ames, mapping = aes(x = as.factor(GarageQual), y = SalePrice, fill=as.factor(GarageQual))) +  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Garage Quality V/s Sale Price ($)") +labs(x="Garage Quality") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+ames$GarageQual <- as.integer(revalue(ames$GarageQual, replace=Quality))
+table(ames$GarageQual)
+
+
+
+
+```
+
+  + GarageCond: Garage condition
+  
+```{r}
+# Ex	Excellent, Gd	Good, TA	Typical/Average, Fa	Fair, Po	Poor, NA	No Garage
+# Values are ordinal again, can be replaced with Quality vector
+ames$GarageCond[is.na(ames$GarageCond)] <- "None"
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(GarageCond), fill=as.factor(GarageCond)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Garage Condition")
+
+ggplot(data = ames, mapping = aes(x = as.factor(GarageCond), y = SalePrice, fill=as.factor(GarageCond))) +  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Garage Condition V/s Sale Price ($)") +labs(x="Garage Condition") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+ames$GarageCond <- as.integer(revalue(ames$GarageCond, replace=Quality))
+table(ames$GarageCond)
+
+
+
+cor(ames$GarageCond, ames$GarageQual)
+```
+
+### 2.9 Basement variables
+
+```{r}
+# There are 11 Basement variables. 
+sort(sapply(ames[, c("BsmtQual", "BsmtCond", "BsmtExposure", "BsmtFinType1","BsmtFinSF1",
+                "BsmtFinSF2", "BsmtFinType2","BsmtUnfSF", "TotalBsmtSF", "BsmtFullBath",
+                "BsmtHalfBath")],function(x) sum(is.na(x))), decreasing = TRUE)
+# So, maximum NAs are 82.
+
+# Checking if all 79 NAs in BsmtFinType1 are the same observations among BsmtCond(82), BsmtExposure(82), BsmtQual(81) and BsmtFinType2(80)
+length(which(is.na(ames$BsmtCond) & is.na(ames$BsmtExposure) &
+               is.na(ames$BsmtQual) & is.na(ames$BsmtFinType2) & is.na(ames$BsmtFinType1)))
+
+# Finding additional NAs
+ames[!is.na(ames$BsmtFinType1) &
+       (is.na(ames$BsmtCond)|is.na(ames$BsmtQual)|
+          is.na(ames$BsmtExposure)|is.na(ames$BsmtFinType2)),
+    c('BsmtCond', 'BsmtExposure', 'BsmtQual', 'BsmtFinType2', 'BsmtFinType1')]
+# The table shows that the NAs of each are in different observations.
+#Imputing mode to all remaining variables
+ames$BsmtFinType2[333] <- names(sort(-table(ames$BsmtFinType2)))[1]
+ames$BsmtExposure[c(949, 1488, 2349)] <- names(sort(table(ames$BsmtExposure), decreasing = TRUE))[1]
+ames$BsmtCond[c(2041, 2186, 2525)] <- names(sort(table(ames$BsmtCond), decreasing = TRUE))[1]
+ames$BsmtQual[c(2218, 2219)] <- names(sort(table(ames$BsmtQual), decreasing = TRUE))[1]
+
+table(ames$BsmtCond)
+table(ames$BsmtExposure)
+table(ames$BsmtQual)
+table(ames$BsmtFinType2)
+```
+
+  + BsmtQual: Evaluates the height of the basement
+  
+```{r}
+# Ex	Excellent (100+ inches), Gd	Good (90-99 inches), TA	Typical (80-89 inches), Fa	Fair (70-79 inches), Po	Poor (<70 inches), NA	No Basement
+# Variables can be made ordinal with the Quality vector
+ames$BsmtQual[is.na(ames$BsmtQual)] <- 'None'
+
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(BsmtQual), fill=as.factor(BsmtQual)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Basement Quality")
+
+ggplot(data = ames, mapping = aes(x = as.factor(BsmtQual), y = SalePrice, fill=as.factor(BsmtQual))) +  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Basement Quality V/s Sale Price ($)") +labs(x="Basement Quality") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+ames$BsmtQual<-as.integer(revalue(ames$BsmtQual,Quality))
+table(ames$BsmtQual)
+
+
+```
+
+  + BsmtCond: Evaluates the general condition of the basement
+  
+```{r}
+# Ex	Excellent, Gd	Good, TA	Typical - slight dampness allowed, Fa	Fair - dampness or some cracking or settling, Po	Poor - Severe cracking, settling, or wetness, NA	No Basement
+
+# Variables can be made ordinal with the Quality vector
+
+ames$BsmtCond[is.na(ames$BsmtCond)] <- 'None'
+ggplot(data = ames) + geom_bar(mapping=aes(x=as.factor(BsmtCond), fill=as.factor(BsmtCond)))+ guides(fill=FALSE)+scale_fill_brewer()+labs(x="Basement Condition")
+
+ggplot(data = ames, mapping = aes(x = as.factor(BsmtCond), y = SalePrice, fill=as.factor(BsmtCond))) +  
+  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Basement Condition V/s Sale Price ($)") +labs(x="Basement Condition") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+ames$BsmtCond<-as.integer(revalue(ames$BsmtCond, Quality))
+table(ames$BsmtCond)
+
+
+```
+
+  + BsmtExposure: Refers to walkout or garden level walls
+  
+```{r}
+# Gd:	Good Exposure, Av:	Average Exposure (split levels or foyers typically score average or above), Mn:	Mimimum Exposure, No:	No Exposure, NA:	No Basement
+
+# Variables can be made ordinal.
+ggplot(data = ames, mapping = aes(x = as.factor(BsmtExposure), y = SalePrice, fill=as.factor(BsmtExposure))) +  
+  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Basement Exposure V/s Sale Price ($)") +labs(x="Basement Exposure") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+ames$BsmtExposure[is.na(ames$BsmtExposure)] <- 'None'
+Exposure <- c('None'=0, 'No'=1, 'Mn'=2, 'Av'=3, 'Gd'=4)
+ames$BsmtExposure<-as.integer(revalue(ames$BsmtExposure, replace=Exposure))
+table(ames$BsmtExposure)
+
+
+```
+
+  + BsmtFinType1: Rating of basement finished area
+  
+```{r}
+# GLQ:	Good Living Quarters, ALQ:	Average Living Quarters, BLQ:	Below Average Living Quarters, Rec:	Average Rec Room, LwQ:	Low Quality, Unf:	Unfinshed, NA:	No Basement
+
+#Values can be made ordinal
+
+ames$BsmtFinType1[is.na(ames$BsmtFinType1)] <- 'None'
+FinType <- c('None'=0, 'Unf'=1, 'LwQ'=2, 'Rec'=3, 'BLQ'=4, 'ALQ'=5, 'GLQ'=6)
+ames$BsmtFinType1<-as.integer(revalue(ames$BsmtFinType1,replace=FinType))
+table(ames$BsmtFinType1)
+
+ggplot(data = ames, mapping = aes(x = as.factor(BsmtFinType1), y = SalePrice, fill=as.factor(BsmtFinType1))) +  
+  geom_boxplot()+  scale_fill_discrete(name="Rating of Basement Finish",labels=c("None", "Unfinished", "Low Quality", "Avg.Rec Room","Below Avg. Living Quaters", "Avg Living Quaters",  "Good Lving Quaters" ))+
+  ggtitle("BsmtFinType1 Variable V/s Sale Price ($)") +labs(x="Basement Rating") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+
+
+```
+
+  + BsmtFinType2: Rating of basement finished area (if multiple types)
+  
+```{r}
+# GLQ:	Good Living Quarters, ALQ:	Average Living Quarters, BLQ:	Below Average Living Quarters, Rec:	Average Rec Room, LwQ:	Low Quality, Unf:	Unfinshed, NA:	No Basement
+
+#Values can be made ordinal with FinType vector
+
+ames$BsmtFinType2[is.na(ames$BsmtFinType2)] <- 'None'
+FinType <- c('None'=0, 'Unf'=1, 'LwQ'=2, 'Rec'=3, 'BLQ'=4, 'ALQ'=5, 'GLQ'=6)
+ames$BsmtFinType2<-as.integer(revalue(ames$BsmtFinType2,replace=FinType))
+table(ames$BsmtFinType2)
+```
+
+  + Remaining Basement Variables having NA values
+  
+```{r}
+ames[(is.na(ames$BsmtFullBath)|
+       is.na(ames$BsmtHalfBath)|is.na(ames$BsmtFinSF1)|
+       is.na(ames$BsmtFinSF2)|is.na(ames$BsmtUnfSF)|is.na(ames$TotalBsmtSF)), 
+    c( 'BsmtQual','BsmtFullBath', 'BsmtHalfBath', 'BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF', 'TotalBsmtSF')]
+# There are 1 or 2 NA values in row 2121 and row 2189.Imputing '0' in these NA values.
+
+# BsmtFullBath: Basement full bathrooms
+ames$BsmtFullBath[c(2121, 2189)] <-0
+table(ames$BsmtFullBath)
+
+# BsmtHalfBath: Basement half bathrooms
+ames$BsmtHalfBath[is.na(ames$BsmtHalfBath)] <-0
+table(ames$BsmtHalfBath)
+
+# BsmtFinSF1: Basement Type 1 finished square feet
+ames$BsmtFinSF1[is.na(ames$BsmtFinSF1)] <-0
+summary(ames$BsmtFinSF1)
+
+# BsmtFinSF2: Basement Type 2 finished square feet
+ames$BsmtFinSF2[is.na(ames$BsmtFinSF2)] <-0
+
+# BsmtUnfSF: Unfinished square feet of basement area
+ames$BsmtUnfSF[is.na(ames$BsmtUnfSF)] <-0
+
+# TotalBsmtSF: Total square feet of basement area
+ames$TotalBsmtSF[is.na(ames$TotalBsmtSF)] <-0
+
+# Checking if all NA values are replaced.
+
+sort(sapply(ames[, c("BsmtQual", "BsmtCond", "BsmtExposure", "BsmtFinType1","BsmtFinSF1",
+                     "BsmtFinSF2", "BsmtFinType2","BsmtUnfSF", "TotalBsmtSF", "BsmtFullBath",
+                     "BsmtHalfBath")],function(x) sum(is.na(x))), decreasing = TRUE)
+
+```
+
+### 2.10 Masonry variables
+
+  + MasVnrType: Masonry veneer type
+  
+```{r}
+# BrkCmn:	Brick Common, BrkFace:	Brick Face, CBlock:	Cinder Block, None: None, Stone: Stone
+table(ames$MasVnrType) # It is a categorical variable.
+sum(is.na(ames$MasVnrType)) # It has 24 missing values.
+```
+
+  + MasVnrArea: Masonry veneer area in square feet
+  
+```{r}
+#It is integer variable. 
+sum(is.na(ames$MasVnrArea)) #There are 23 NAs.
+
+#Checking if both MasVnrType and MasVnrArea have same NAs
+length(which(is.na(ames$MasVnrType) & is.na(ames$MasVnrArea)))
+
+#So, 23 are same.
+
+#one MasVnrType NA has MasVnrArea. It is non-zero
+ames[is.na(ames$MasVnrType) & !is.na(ames$MasVnrArea), c('MasVnrType', 'MasVnrArea')]
+
+# MasVnrType is NA in row 2611.
+
+#Imputing mode for the missing MasVnrType
+
+ames$MasVnrType[2611] <- names(sort(table(ames$MasVnrType), decreasing=TRUE))[2] # Taking the 2nd value as the 1st is 'none'
+ames[2611, c('MasVnrType', 'MasVnrArea')]
+
+ames$MasVnrType[is.na(ames$MasVnrType)] <- "None"
+table(ames$MasVnrType)
+```
+
+####*The plot shows that there is significant price increase with 'Stone' type.Therefore, making MasVnrType 'Ordinal'. *
+
+```{r}
+Masonry <- c('None'=0, 'BrkCmn'=0, 'BrkFace'=1, 'Stone'=2)
+ames$MasVnrType<-as.integer(revalue(ames$MasVnrType, Masonry))
+table(ames$MasVnrType)
+# Visualizing relationship between MasVnrType and SalePrice
+ggplot(data=ames[!is.na(ames$SalePrice), ], mapping =aes(x=as.factor(MasVnrType), y=SalePrice, fill=as.factor(MasVnrType)))+ 
+  geom_boxplot()+ scale_y_continuous(breaks=seq(10000, 800000, by=100000)) +
+  labs(x="Masonary Veneer Type", y="Sale Price")+ 
+  scale_fill_discrete(name="Masonary Veneer",labels=c("None/Brick Common","Brick Face","Stone"))+
+  ggtitle(" Sale Prices Vs Masonary Veneer Type") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+  + MasVnrArea: Masonry veneer area in square feet
+  
+```{r}
+# An integer variable.
+
+ames$MasVnrArea[is.na(ames$MasVnrArea)] <-0
+summary(ames$MasVnrArea)
+sum(is.na(ames$MasVnrArea))
+class(ames$MasVnrArea)
+```
+
+### 2.11 MSZoning: Identifies the general zoning classification of the sale
+
+```{r}
+# A	Agriculture, C	Commercial, FV	Floating Village Residential, I	Industrial, RH	Residential High Density, RL	Residential Low Density, RP	Residential Low Density Park, RM	Residential Medium Density
+
+sum(is.na(ames$MSZoning)) # 4 missing values
+
+#Imputing the mode for categorical variables
+
+ames$MSZoning[is.na(ames$MSZoning)] <- names(sort(table(ames$MSZoning), decreasing=TRUE))[1]
+ames$MSZoning <- as.factor(ames$MSZoning)
+table(ames$MSZoning)
+```
+
+  + Visualizing MSZoning and SalePrice
+  
+```{r}
+ggplot(data=ames[!is.na(ames$SalePrice),], mapping =aes(x=MSZoning, y=SalePrice, fill=MSZoning)) +
+  geom_boxplot()+ 
+  scale_fill_discrete(name="Zoning",labels=c("Commerical", "Floating Village Residential", "Residential High Density", "Residential Low Density","Residential Medium Density" ))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +
+  labs(x="Zoning", y="Sale Price")+
+  ggtitle(" MS Zoning V/s Sale Prices") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+*Highest Prices are in Residential Low Density and Floating Village Residential.*
+
+### 2.12 Kitchen Variables
+
+  + KitchenQual: Kitchen quality
+
+```{r}
+# Ex:	Excellent, Gd:	Good, TA:	Typical/Average, Fa:	Fair, Po:	Poor
+
+sum(is.na(ames$KitchenQual)) 
+# There is 1 NA
+
+table(ames$KitchenQual)
+sum(table(ames$KitchenQual))
+
+ggplot(data=ames[!is.na(ames$SalePrice),], mapping =aes(x=as.factor(KitchenQual), y=SalePrice, fill=as.factor(KitchenQual)))+guides(fill=FALSE)+
+  geom_boxplot()+ 
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +
+  labs(x="KitchenQual", y="Sale Price")+
+  ggtitle(" Kitchen Quality V/s Sale Prices") +
+  theme(plot.title = element_text(hjust = 0.5))
+#Ordinal Variable
+ames$KitchenQual[is.na(ames$KitchenQual)] <- 'TA' # Replacing one NA with most common value i.e. 'TA'
+ames$KitchenQual<-as.integer(revalue(ames$KitchenQual, Quality))
+
+
+
+table(ames$KitchenQual)
+sum(table(ames$KitchenQual)) # Now, total 2919 values.
+```
+
+  + KitchenAbvGr: Kitchen above grade
+  
+```{r}
+summary(ames$KitchenAbvGr)
+str(ames$KitchenAbvGr)
+sum(is.na(ames$KitchenAbvGr)) # No NA values
+table(ames$KitchenAbvGr)
+```
+
+### 2.13 Utilities
+
+```{r}
+# Utilities: Type of utilities available
+# AllPub:	All public Utilities (E,G,W,& S), NoSewr:	Electricity, Gas, and Water (Septic Tank), NoSeWa:	Electricity and Gas Only, ELO:	Electricity only	
+
+sum(is.na(ames$Utilities)) 
+# There are 2 NA values.
+
+table(ames$Utilities)
+ames$Utilities <- NULL
+```
+2916 houses out of 2919 have all public utilities. Therefore, this variable will not add much to prediction and should not be used in model building.
+
+### 2.14 Functional: Home functionality
+
+```{r}
+# Functional: Home functionality (Assume typical unless deductions are warranted)
+
+# Typ	Typical Functionality, Min1	Minor Deductions 1, Min2	Minor Deductions 2, Mod	Moderate Deductions, Maj1	Major Deductions 1, Maj2	Major Deductions 2, Sev	Severely Damaged, Sal	Salvage only
+
+which(is.na(ames$Functional)) # 2 NA values
+
+# Imputing mode for the 2 NA values at row number 2217 and 2474
+
+ames$Functional[c(2217, 2474)] <- names(sort(-table(ames$Functional)))[1]
+
+
+ames$Functional <- as.integer(revalue(ames$Functional,c('Sal'=0, 'Sev'=1, 'Maj2'=2, 'Maj1'=3, 'Mod'=4, 'Min2'=5, 'Min1'=6, 'Typ'=7)))
+table(ames$Functional)
+```
+
+### 2.15 Exterior Variables
+
+  + Exterior1st: Exterior covering on house
+  
+```{r}
+# 
+# AsbShng	Asbestos Shingles, AsphShn	Asphalt Shingles, BrkComm	Brick Common, BrkFace	Brick Face, CBlock	Cinder Block, CemntBd	Cement Board, HdBoard	Hard Board, ImStucc	Imitation Stucco, MetalSd	Metal Siding, Other	Other, Plywood	Plywood, PreCast	PreCast, Stone	Stone, Stucco	Stucco, VinylSd	Vinyl Siding, Wd Sdng	Wood Siding, WdShing	Wood Shingles
+
+which(is.na(ames$Exterior1st)) 
+# 1 NA value in row number 2152
+
+# Imputing mode
+ames$Exterior1st[2152] <- names(sort(-table(ames$Exterior1st)))[1]
+sum(is.na(ames$Exterior1st))
+
+# As it's a categorical variable, so converting to factors
+ames$Exterior1st <- as.factor(ames$Exterior1st)
+table(ames$Exterior1st)
+sum(table(ames$Exterior1st))
+
+```
+
+  + Exterior2nd: Exterior covering on house (if more than one material)
+
+```{r}
+which(is.na(ames$Exterior2nd))
+# 1 NA value in row number 2152
+
+# Imputing mode
+ames$Exterior2nd[2152] <- names(sort(-table(ames$Exterior2nd)))[1]
+
+#Categorical Variable
+ames$Exterior2nd <- as.factor(ames$Exterior2nd)
+
+table(ames$Exterior2nd)
+
+sum(table(ames$Exterior2nd))
+```
+
+  + ExterQual: Evaluates the quality of the material on the exterior
+  
+```{r}
+# Ex	Excellent, Gd	Good, TA	Average/Typical, Fa	Fair, Po	Poor
+sum(is.na(ames$ExterQual)) # No NA values
+
+ggplot(data = ames, mapping = aes(x = as.factor(ExterQual), y = SalePrice, fill=as.factor(ExterQual))) +  
+  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Present Condtion of Material V/s Sale Price ($)") +labs(x="Exterior Condition") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+
+#Values are ordinal
+ames$ExterQual <- as.integer(revalue(ames$ExterQual, Quality))
+
+table(ames$ExterQual)
+sum(table(ames$ExterQual))
+
+
+
+```
+
+  + ExterCond: Evaluates the present condition of the material on the exterior
+  
+```{r}
+# Ex	Excellent, Gd	Good, TA	Average/Typical, Fa	Fair, Po	Poor
+sum(is.na(ames$ExterCond)) # No NA values
+
+ggplot(data = ames, mapping = aes(x = as.factor(ExterCond), y = SalePrice, fill=as.factor(ExterCond))) +  
+  geom_boxplot()+  guides(fill=FALSE)+ 
+  ggtitle("Exterior Quality of Material V/s Sale Price ($)") +labs(x="Exterior Quality") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000), labels = comma)
+#Values are ordinal
+
+ames$ExterCond <- as.integer(revalue(ames$ExterCond, Quality))
+
+table(ames$ExterCond)
+sum(table(ames$ExterCond))
+
+
+```
+
+### 2.16 Electrical: Electrical system
+
+```{r}
+# SBrkr:	Standard Circuit Breakers & Romex, FuseA:	Fuse Box over 60 AMP and all Romex wiring (Average), FuseF:	60 AMP Fuse Box and mostly Romex wiring (Fair), FuseP:	60 AMP Fuse Box and mostly knob & tube wiring (poor), Mix:	Mixed
+
+which(is.na(ames$Electrical))
+# 1 NA value in row number 1380.
+
+# Imputing mode
+ames$Electrical[1380] <- names(sort(-table(ames$Electrical)))[1]
+
+# Categorical variable
+ames$Electrical <- as.factor(ames$Electrical)
+
+table(ames$Electrical)
+sum(table(ames$Electrical))
+```
+
+### 2.16 Sale Type and Condition
+
+  + SaleType: Type of sale
+  
+```{r}
+# WD: Warranty Deed - Conventional, CWD: Warranty Deed - Cash, VWD:	Warranty Deed - VA Loan, New: Home just constructed and sold, COD: Court Officer Deed/Estate, Con:	Contract 15% Down payment regular terms, ConLw:	Contract Low Down payment and low interest, ConLI:	Contract Low Interest, ConLD:	Contract Low Down, Oth:	Other
+
+which(is.na(ames$SaleType)) 
+# 1 NA value in row number 2490.
+
+# Imputing mode
+ames$SaleType[is.na(ames$SaleType)] <- names(sort(-table(ames$SaleType)))[1]
+
+# Categorical variable
+ames$SaleType <- as.factor(ames$SaleType)
+
+table(ames$SaleType)
+sum(table(ames$SaleType))
+```
+
+  + SaleCondition: Condition of sale
+  
+```{r}
+# Normal:	Normal Sale, Abnorml:	Abnormal Sale -  trade, foreclosure, short sale, AdjLand:	Adjoining Land Purchase, Alloca:	Allocation - two linked properties with separate deeds, typically condo with a garage unit, Family:	Sale between family members, Partial:	Home was not completed when last assessed (associated with New Homes)
+
+which(is.na(ames$SaleCondition)) 
+#No NAs
+
+# Categorical variable
+ames$SaleCondition<- as.factor(ames$SaleCondition)
+
+table(ames$SaleCondition)
+```
+
+```{r}
+dim(ames)
+sum(is.na(ames[!is.na(ames$SalePrice), ]))
+ames %>%
+  skim()
+```
+All the NA values have been imputed.
+
+## Part-3 : Factorising Remaining Variables
+
+### 3.1 Remaining Character Variables
+
+```{r}
+Charvar <- names(ames[, sapply(ames, is.character)])
+Charvar
+cat('There are', length(Charvar), 'remaining columns with character values')
+```
+
+### 3.2 Street: Type of road access to property
+
+```{r}
+# Grvl: Gravel, Pave: Paved
+
+#Values look ordinal, as Paved is better 
+ames$Street<-as.integer(revalue(ames$Street, c('Grvl'=0, 'Pave'=1)))
+table(ames$Street)
+```
+All houses have access to paved road except 12 variables. 
+
+### 3.3 PavedDrive: Paved driveway
+
+```{r}
+# Y:Paved, P:	Partial Pavement, N:	Dirt/Gravel
+
+#Values look ordinal, as Paved is better 
+ames$PavedDrive<-as.integer(revalue(ames$PavedDrive, c('N'=0, 'P'=1, 'Y'=2)))
+
+table(ames$PavedDrive)
+sum(table(ames$PavedDrive))
+```
+
+### 3.4 LandContour: Flatness of the property
+
+```{r}
+# Lvl:	Near Flat/Level, Bnk:	Banked - Quick and significant rise from street grade to building, HLS:	Hillside - Significant slope from side to side, Low: Depression
+
+#No ordinality, so converting into factors
+ames$LandContour <- as.factor(ames$LandContour)
+
+table(ames$LandContour)
+sum(table(ames$LandContour))
+```
+
+### 3.5 LandSlope: Slope of property
+
+```{r}
+# Gtl:	Gentle slope, Mod:	Moderate Slope, Sev:	Severe Slope
+table(ames$LandSlope)
+# Values are ordinal
+ames$LandSlope<-as.integer(revalue(ames$LandSlope, c('Sev'=0, 'Mod'=1, 'Gtl'=2)))
+
+table(ames$LandSlope)
+sum(table(ames$LandSlope))
+```
+
+### 3.6 RoofStyle: Type of roof
+
+```{r}
+# Flat:	Flat, Gable:	Gable, Gambrel:	Gabrel (Barn), Hip:	Hip, Mansard:	Mansard, Shed:	Shed
+
+# Not ordinal, converting to categorical
+ames$RoofStyle <- as.factor(ames$RoofStyle)
+
+table(ames$RoofStyle)
+sum(table(ames$RoofStyle))
+```
+
+### 3.7 RoofMatl: Roof material
+
+```{r}
+# ClyTile:	Clay or Tile, CompShg:	Standard (Composite) Shingle, Membran:	Membrane, Metal:	Metal, Roll:	Roll, Tar&Grv:	Gravel & Tar, WdShake:	Wood Shakes, WdShngl:	Wood Shingles
+
+# Not ordinal, converting to categorical
+ames$RoofMatl <- as.factor(ames$RoofMatl)
+
+table(ames$RoofMatl)
+sum(table(ames$RoofMatl))
+```
+
+### 3.8 Heating: Type of heating
+
+```{r}
+# Floor:	Floor Furnace, GasA:	Gas forced warm air furnace, GasW:	Gas hot water or steam heat, Grav:	Gravity furnace, OthW:	Hot water or steam heat other than gas, Wall:	Wall furnace
+
+# Not ordinal, converting to categorical
+ames$Heating <- as.factor(ames$Heating)
+
+table(ames$Heating)
+sum(table(ames$Heating))
+```
+
+### 3.9 HeatingQC: Heating quality and condition
+
+```{r}
+# Ex	Excellent, Gd	Good, TA	Average/Typical, Fa	Fair, Po	Poor
+
+# Making the variable ordinal using the Quality vector
+ames$HeatingQC<-as.integer(revalue(ames$HeatingQC, Quality))
+
+table(ames$HeatingQC)
+sum(table(ames$HeatingQC))
+```
+
+### 3.10 CentralAir: Central air conditioning
+
+```{r}
+# N	No, Y	Yes
+
+ames$CentralAir<-as.integer(revalue(ames$CentralAir, c('N'=0, 'Y'=1)))
+
+str(ames$CentralAir)
+table(ames$CentralAir)
+```
+
+### 3.11 BldgType: Type of dwelling
+
+```{r}
+# 1Fam:	Single-family Detached, 2FmCon:	Two-family Conversion; originally built as one-family dwelling, Duplx:	Duplex, TwnhsE:	Townhouse End Unit, TwnhsI:	Townhouse Inside Unit
+
+# Visualizing the variable
+ggplot(ames[!is.na(ames$SalePrice),], aes(x=as.factor(BldgType), y=SalePrice, fill=as.factor(BldgType))) + geom_boxplot()+ ggtitle("Building Type V/s SalePrice") + scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +guides(fill=FALSE)+ theme(plot.title = element_text(hjust = 0.5))+ labs(x="Building Type")
+# Doesn't show ordinality as both, Townhouse and 1Fam, are having higher SalePrice.
+
+# Converting to Factor
+ames$BldgType <- as.factor(ames$BldgType)
+
+table(ames$BldgType)
+sum(table(ames$BldgType))
+```
+
+### 3.12 HouseStyle: Style of dwelling
+
+```{r}
+# 1Story:	One story, 1.5Fin:	One and one-half story: 2nd level finished, 1.5Unf:	One and one-half story: 2nd level unfinished, 2Story:	Two story, 2.5Fin:	Two and one-half story: 2nd level finished, 2.5Unf:	Two and one-half story: 2nd level unfinished, SFoyer:	Split Foyer, SLvl:	Split Level
+
+# Visualizing the variable
+ggplot(ames[!is.na(ames$SalePrice),], aes(x=as.factor(HouseStyle), y=SalePrice, fill=as.factor(HouseStyle))) + geom_boxplot()+ ggtitle("HouseStyle V/s SalePrice") + scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +guides(fill=FALSE)+ theme(plot.title = element_text(hjust = 0.5))+ labs(x="House Style", y="Sale Price($)")
+# Converting to Factors
+
+ames$HouseStyle <- as.factor(ames$HouseStyle)
+
+table(ames$HouseStyle)
+sum(table(ames$HouseStyle))
+```
+
+### 3.13 Neighborhood: Physical locations within Ames city limits
+
+```{r}
+# Blmngtn	Bloomington Heights
+# Blueste	Bluestem
+# BrDale	Briardale
+# BrkSide	Brookside
+# ClearCr	Clear Creek
+# CollgCr	College Creek
+# Crawfor	Crawford
+# Edwards	Edwards
+# Gilbert	Gilbert
+# IDOTRR	Iowa DOT and Rail Road
+# MeadowV	Meadow Village
+# Mitchel	Mitchell
+# Names	North Ames
+# NoRidge	Northridge
+# NPkVill	Northpark Villa
+# NridgHt	Northridge Heights
+# NWAmes	Northwest Ames
+# OldTown	Old Town
+# SWISU	South & West of Iowa State University
+# Sawyer	Sawyer
+# SawyerW	Sawyer West
+# Somerst	Somerset
+# StoneBr	Stone Brook
+# Timber	Timberland
+# Veenker	Veenker
+
+# Converting to Factors
+
+ames$Neighborhood <- as.factor(ames$Neighborhood)
+
+table(ames$Neighborhood)
+sum(table(ames$Neighborhood))
+```
+
+### 3.14 Condition1: Proximity to various conditions
+
+```{r}
+# Artery	Adjacent to arterial street
+# Feedr	Adjacent to feeder street	
+# Norm	Normal	
+# RRNn	Within 200' of North-South Railroad
+# RRAn	Adjacent to North-South Railroad
+# PosN	Near positive off-site feature--park, greenbelt, etc.
+# PosA	Adjacent to postive off-site feature
+# RRNe	Within 200' of East-West Railroad
+# RRAe	Adjacent to East-West Railroad
+
+# No ordinality, so converting to factors
+ames$Condition1 <- as.factor(ames$Condition1)
+
+str(ames$Condition1)
+table(ames$Condition1)
+sum(table(ames$Condition1))
+library(gridExtra)
+ggplot(ames[!is.na(ames$SalePrice),], aes(x=Condition1, y=SalePrice, fill= Condition1)) +
+  geom_boxplot()+ scale_fill_discrete(name="Codition 1 - Adjacent to: ",labels=c("Arterial Str", "Feeder Str", "Normal","Adjacent to Off-site Park/Greenbelt", "Near Off-site Feature","Ajdacent to E-W Rail" , "Adjacent to N-S Rail","200m of E-W Rail","200m N-S Rail"))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=50000)) +
+  geom_hline(yintercept=163000, linetype="dashed", color = "red")+
+  ggtitle(" Condition 1 of the Houses V/s Sale Prices") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#Red line is Median SalePrice
+```
+From the boxplot we can see that houses with Normal Condition are most prevalant and have avg house price. Whereas, the houses with Feeder and Arterial St have lower Sale prices. The houses with Condition "RRAe"	Adjacent to East-West Railroad has lower SalePrice than medain whereas, houses with Condition Adjacent to North-South Railroad have high Sale Price
+
+### 3.15 Condition2: Proximity to various conditions (if more than one is present)
+
+```{r}
+# No ordinality, so converting into factors
+ames$Condition2 <- as.factor(ames$Condition2)
+
+str(ames$Condition2)
+table(ames$Condition2)
+sum(table(ames$Condition2))
+```
+
+### 3.15 Foundation: Type of foundation
+
+```{r}
+# BrkTil:	Brick & Tile, CBlock:	Cinder Block, PConc:Poured Concrete, Slab: Slab, Stone:	Stone, Wood: Wood
+
+# Not ordinal
+ames$Foundation <- as.factor(ames$Foundation)
+
+str(ames$Foundation)
+table(ames$Foundation)
+sum(table(ames$Foundation))
+```
+
+## Part-4 : Changing some numeric variables into factors
+There are 3 variables that are recorded numeric but should actually be categorical.
+
+  + YrSold: Year Sold (YYYY)
+  
+```{r}
+str(ames$YrSold)
+```
+It can be left numeric as will be helpful in calculating age of houses.
+
+  + MoSold: Month Sold (MM)
+  
+```{r}
+str(ames$MoSold)
+table(ames$MoSold)
+
+# Converting to factors
+ames$MoSold <- as.factor(ames$MoSold)
+
+table(ames$MoSold)
+sum(table(ames$MoSold))
+
+# Visualizing relationship between Year Sold, Month Sold and SalePrice
+
+ys <- ggplot(ames[!is.na(ames$SalePrice),], mapping=aes(x=as.factor(YrSold), y=SalePrice, fill=YrSold)) + geom_boxplot()+
+  scale_y_continuous(breaks= seq(10000, 800000, by=50000)) +guides(fill=FALSE)+ xlab("Year Sold")+ theme(axis.text.x = element_text(angle=45, vjust=0.5, size=10))+
+  geom_hline(yintercept=163000, linetype="dashed", color = "red")
+
+ms <- ggplot(ames[!is.na(ames$SalePrice),], aes(x=as.factor(MoSold), y=SalePrice, fill= as.factor(MoSold))) +
+  geom_boxplot()+ theme(axis.text.x = element_text(vjust=0.7, size=10))+
+  scale_y_continuous(breaks= seq(10000, 800000, by=50000)) + guides(fill=FALSE)+ xlab("Month Sold")+
+  geom_hline(yintercept=163000, linetype="dashed", color = "red")
+grid.arrange(ys, ms, widths=c(1,2))
+
+#stat='summary', fun.y = "median"
+```
+The YrSold is for 5 years from 2006-2010. The SalePrice start to decline after 2007 due to the banking crisis.
+
+  + MSSubClass: Identifies the type of dwelling involved in the sale
+  
+```{r}
+# 20	1-STORY 1946 & NEWER ALL STYLES
+# 30	1-STORY 1945 & OLDER
+# 40	1-STORY W/FINISHED ATTIC ALL AGES
+# 45	1-1/2 STORY - UNFINISHED ALL AGES
+# 50	1-1/2 STORY FINISHED ALL AGES
+# 60	2-STORY 1946 & NEWER
+# 70	2-STORY 1945 & OLDER
+# 75	2-1/2 STORY ALL AGES
+# 80	SPLIT OR MULTI-LEVEL
+# 85	SPLIT FOYER
+# 90	DUPLEX - ALL STYLES AND AGES
+# 120	1-STORY PUD (Planned Unit Development) - 1946 & NEWER
+# 150	1-1/2 STORY PUD - ALL AGES
+# 160	2-STORY PUD - 1946 & NEWER
+# 180	PUD - MULTILEVEL - INCL SPLIT LEV/FOYER
+
+# These are coded as numbers but are actually factors/categories
+
+table(ames$MSSubClass)
+ames$MSSubClass <- as.factor(ames$MSSubClass)
+
+#revalue for better readability
+ames$MSSubClass<-revalue(ames$MSSubClass,
+                         c('20'='1 story 1946 & newer',
+                           '30'='1 story 1945 & older',
+                           '40'='1 story fin attic all ages',
+                           '45'='1.5 story unf all ages', 
+                           '50'='1.5 story fin all ages', 
+                           '60'='2 story 1946 & newer', 
+                           '70'='2 story 1945 & older', 
+                           '75'='2.5 story all ages', 
+                           '80'='split/multi level', 
+                           '85'='split foyer', 
+                           '90'='duplex all style/age', 
+                           '120'='1 story PUD 1946 & newer', 
+                           '150'='1.5 story PUD all ages', 
+                           '160'='2 story PUD 1946 & newer', 
+                           '180'='PUD multilevel w/split lev/foyer', 
+                           '190'='2 family conversion-all styles/ages'))
+
+class(ames$MSSubClass)
+table(ames$MSSubClass)
+sum(table(ames$MSSubClass))
+```
+
+  + Garage variables
+  
+```{r}
+summary(ames$GarageYrBlt)
+ames$GarageYrBlt[2593] <- 2007
+# A typo error as GarageYrBlt was 2207 while YearBuilt=2006 and YearRemodAdd=2007.
+summary(ames$GarageYrBlt)
+
+```
+
+## Part-5 : Status check after 'Data Cleaning' and 'Factorisation'
+
+```{r}
+numericVars <- which(sapply(ames, is.numeric)) #index vector numeric variables
+length(numericVars)
+
+factorVars <- which(sapply(ames, is.factor)) #index vector factor variables
+length(factorVars)
+
+cat('There are', length(numericVars), 'numerical variables, and', length(factorVars), 'categorical variables.')
+ames%>%
+  skim()
+#56 num, 23 fact
+write.csv(ames, "ames_clean1.csv")
+getwd()
+```
+  + So far, all character variables have been converted into categorical factors or to ordinal.
+  + 2 numerical variables have been converted into factors.
+  + One variable (Utilities) has been dropped.
+  + The number of numerical variables is now 56 (including the response variable SalePrice).
+  + The remaining 23 variables are categorical.
+  
+
+## Part-6 : Exploratory Data Analysis & Visualisations 
+
+### 6.1 Checking Correlation again for Numerical Variables
+```{r}
+
+ames_numvar <- ames[, numericVars]
+cor_numvar <- cor(ames_numvar, use="pairwise.complete.obs") # Correlations of all numeric variables
+
+# Sort on decreasing correlations with SalePrice
+cor_sorted <- as.matrix(sort(cor_numvar[,'SalePrice'], decreasing = TRUE))
+
+# Selecting only high corelations
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+
+cor_numvar <- cor_numvar[CorHigh, CorHigh]
+par(mfrow=c(1,1)) 
+corrplot(cor_numvar, diag = FALSE, order = "FPC",
+         tl.pos = NULL, tl.cex = 0.7, addCoef.col = 'white', cl.cex = .7, number.cex=.7, method = "shade", type = "full")
+
+
+CorHigh
+
+#  [1] "SalePrice"    "OverallQual"  "GrLivArea"    "ExterQual"    "KitchenQual" 
+#  [6] "GarageCars"   "GarageArea"   "TotalBsmtSF"  "X1stFlrSF"    "BsmtQual"    
+# [11] "FullBath"     "GarageFinish" "TotRmsAbvGrd" "YearBuilt"    "FireplaceQu" 
+# [16] "GarageYrBlt"  "YearRemodAdd"
+```
+The number of variables with a correlation of at least 0.5 with the SalePrice is 16 now.
+1. OverallQual, 2. GrLivArea, 3. ExternalQual 4. GarageCars 5. TotalBsmtSF 6. BsmtQual
+7. FUllBath 8. GarageFinish 9. YrBuilt 10. FireplaceQu are highest correlated num variables
+
+Collinearity Issue 
+1. ExternalQual V/s KitchenQual
+2. GarageCars V/s GarageArea
+3. TotalBsmtSF V/s X1stFlrSF
+4. GrLivArea V/s TotRmsAbvGrd
+5. YrBuilt V/s GarageYrBlt
+6. YrBuilt V/s YearRemodAdd & GarageYrBlt V/s YearRemodAdd
+
+Out of the above collinear variables, one can be removed from analysis. 
+
+
+### 6.2 Visualisation of important variables
+
+  + Plotting SalePrice with GrLivArea 
+  
+```{r}
+# GrLivArea: Above grade (ground) living area square feet having values from 334 sq. ft. to 5642 sq.ft. 
+ggplot(data = ames[!is.na(ames$SalePrice),], mapping=aes(x=GrLivArea))+
+         geom_histogram(color="yellow", binwidth = 500)+
+  labs(x="Ground Living Area in Sq. Ft. ")
+
+#GrLivArea is right skewed 
+
+ggplot(data=ames[!is.na(ames$SalePrice),], 
+       mapping =aes(x=GrLivArea, y=SalePrice, color=as.factor(HouseStyle))) +
+  geom_point(shape=1) +ggtitle("Plot GrLivArea with SalePrice") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +
+  ggtitle("Plot of Ground Floor Living Area to SalePrice") +
+  scale_color_discrete(name="House Style",labels=c("1.5 Story Fin", "1.5 Story UnFin", 
+                                                  "1 Story", "2.5 Story Fin",
+                                                  "2.5 Story UnFin", "2 Story","Split Foyer",
+                                                  "Split Level"))+
+  labs(x="Ground Floor Living Area in sq. ft.", y="Sale Price") +
+  geom_smooth(method='lm', se=FALSE, color="blue")
+
+
+
+```
+Plot shows that there are two values with high ground floor living area that fetched lower price in Edwards Neighborhood. Also, two housed with high sale price are present in NoRidge Neighborhood. These could be further used for outlier analysis.Both the Saleprice and GrLivArea will need to be centered. 
+
+
+  + Plotting SalePrice with OverallQual 
+  
+```{r}
+str(ames$OverallQual)
+ggplot(data=ames, aes(x=as.factor(OverallQual), color=as.factor(OverallQual))) +
+  geom_histogram(stat='count')+guides(color=FALSE)+ labs(x="Overall Quality") 
+summary(ames$OverallQual) 
+
+q1 <- ggplot(data=ames[!is.na(ames$SalePrice),], mapping =aes(x=as.factor(OverallQual), y=SalePrice, color=as.factor(OverallQual))) +
+  geom_boxplot() +guides(color=FALSE)+
+  scale_y_continuous(breaks= seq(10000, 800000, by=100000)) +
+  ggtitle("Plot of OverallQuality to SalePrice") +
+  labs(x="Overall Quality", y="Sale Price") + guides(fill=FALSE) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+q2 <- ggplot(data=ames, aes(x=as.factor(OverallQual), color=as.factor(OverallQual))) +
+  geom_histogram(stat='count')+guides(color=FALSE)+ labs(x="Overall Quality") 
+
+grid.arrange(q1, q2)
+
+```
+Plot of OverallQual vs SalePrice gives high correlation and there are no extreme values.
+The SalePrice increases with Overall Quality of Houses. ALso, max number of houses fall within the overall quality of 5, 6 and 7 and have average Sale prices. There are outliers as well with highest quality but with less Saleprice. 
+
+  + Plotting All Plot & Area variables 
+  
+```{r}
+names(numericVars)
+
+p1 <- ggplot(data= ames, aes(x=LotFrontage)) +
+  geom_density(color="blue") + labs(x='Lot frontage in ft. ')
+p2 <- ggplot(data= ames[ames$LotArea<100000,], aes(x=LotArea)) +
+  geom_density(color="blue") + labs(x='Lot Area sq. ft. ')
+p3 <- ggplot(data= ames, aes(x=LowQualFinSF)) +
+  geom_density(color="blue") + labs(x='Low quality finish all floors in sq. ft.')
+p4 <- ggplot(data= ames, aes(x=GrLivArea)) +
+  geom_density(color="blue") + labs(x='Ground Living Area in sq.ft. ')
+p5 <- ggplot(data= ames, aes(x=X1stFlrSF)) +
+  geom_density(color="blue") + labs(x='First Floor Area sq. ft. ')
+p6 <- ggplot(data= ames, aes(x=X2ndFlrSF)) +
+  geom_density(color="blue") + labs(x='Second Floor Area sq. ft. ')
+p7 <- ggplot(data= ames, aes(x=TotalBsmtSF)) +
+  geom_density(color="blue") + labs(x='Total Basement Finish in sq. ft. ')
+p8 <- ggplot(data= ames, aes(x=BsmtFinSF1)) +
+  geom_density(color="blue") + labs(x='Type 1 Basement Finish sq. ft. ')
+p9 <- ggplot(data= ames, aes(x=BsmtFinSF2)) +
+  geom_density(color="blue") + labs(x='Type 2 Basement Finish sq. ft. ')
+p10 <- ggplot(data= ames, aes(x=BsmtUnfSF)) +
+  geom_density(color="blue") + labs(x='Unfinished Basement sq. ft. ')
+
+grid.arrange(p1, p2, p3, p4, p5, p6,p7,p8, p9, p10)
+
+cor(ames$GrLivArea, (ames$X1stFlrSF + ames$X2ndFlrSF + ames$LowQualFinSF)) 
+# The correlation between GrLivArea and the 3 variables is exactly 1.
+
+cor(ames$TotalBsmtSF, (ames$BsmtFinSF1 + ames$BsmtFinSF2 + ames$BsmtUnfSF)) 
+# The correlation between GrLivArea and the 3 variables is exactly 1.
+
+```
+GrLivArea seems to be just the total of square feet 1st and 2nd floor and Low Quality finish.
+TotalBsmtSF is also equal to BsmtFinSF1+BsmtFinSF2+BsmtunfSF
+GrLivArea and Total Rms Abv Grd are highly correlated 
+There are also quite a few outliers as well as seen from the plots.
+
+  + Visualising Collinear Variables 
+  
+```{r}
+#GrLivArea And TotRmsAbvGrd have 0.81 collinearity
+ggplot(data=ames, aes(x=as.factor(TotRmsAbvGrd), y=GrLivArea, fill=as.factor(TotRmsAbvGrd))) + geom_bar(stat='summary', fun.y="median") + guides(fill=FALSE)+ labs(x='Rooms above Ground', y='G.Living area sq. ft')
+
+#GarageArea and GarageCars have 0.89 collinearity
+ggplot(data=ames, aes(x=GarageCars, y=GarageArea, fill=GarageCars)) + geom_bar(stat='summary', fun.y="median") + guides(fill=FALSE)+ labs(x='Garage Cars', y='Garage Area sq. ft')
+
+#X1stFlrSF and TotalBsmtSF have 0.8 collinearity
+ggplot(data=ames, aes(x=TotalBsmtSF, y=X1stFlrSF)) + geom_point() + guides(fill=FALSE)+ labs(x='Total Basement sq.ft.', y='First Flr sq. ft')
+
+#GarageYrBlt and YearBuilt have 0.85 collinearity
+ggplot(data=ames, aes(x=GarageYrBlt, y=YearBuilt, color=as.factor(OverallQual))) + geom_point() + guides(fill=FALSE)+ labs(x='Garage Year Built', y='Year Built')
+
+#GarageCond and GarageQual 
+
+```
+The above plot shows that the variables are collinear and one of them should be removed from further analysis. Garage variables have also have high correlation with SalePrice.
+
+
+  + Neighbourhood Variable Importance
+  
+```{r}
+n1 <- ggplot(ames[!is.na(ames$SalePrice),], aes(x=Neighborhood, y=SalePrice,color=Neighborhood)) +
+  geom_bar(stat='summary', fun.y = "median") +guides(color=FALSE)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+  geom_hline(yintercept=163000, linetype="dashed", color = "red") # dashed line is median SalePrice
+
+n2 <- ggplot(data=ames, aes(x=Neighborhood, color=Neighborhood)) +
+  geom_histogram(stat='count')+guides(color=FALSE)+
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(n1, n2)
+```
+The first graph shows the median SalePrice v/s Neighborhood.
+The frequency (number of houses) of each Neighborhood in the train set is shown in the labels.
+The second graph below shows the frequencies across all data.
+
+
+  + MSSubClass Variable importance
+  
+```{r}
+m1 <- ggplot(ames[!is.na(ames$SalePrice),], aes(x=MSSubClass, y=SalePrice, color=MSSubClass)) +
+  geom_bar(stat='summary', fun.y = "median") +guides(color=FALSE)+
+  theme(axis.text.x = element_text(angle = 15, hjust = 1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+  geom_hline(yintercept=163000, linetype="dashed", color = "red") # dashed line is median SalePrice
+
+m2 <- ggplot(data=ames, aes(x=MSSubClass,color=MSSubClass)) +
+  geom_histogram(stat='count')+guides(color=FALSE)+
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+grid.arrange(m1, m2)
+
+# The first visualization shows the median SalePrice by MSSubClass. 
+# The frequency (number of houses) of each MSSubClass in the train set is shown in the labels.
+# The histrogram shows the frequencies across all data. 
+```
+
+  + Quality Variables and Condition Variables Visualisation
+ 
+```{r}
+names(numericVars)
+q1 <- ggplot(data=ames, aes(x=as.factor(OverallQual))) +
+        geom_bar(stat='count') +labs(x='Overall Quality')
+q2 <- ggplot(data=ames, aes(x=as.factor(OverallCond))) +
+        geom_bar(stat='count')+labs(x='Overall Condition')
+q3 <- ggplot(data=ames, aes(x=as.factor(ExterQual))) +
+        geom_bar(stat='count')+labs(x='External Quality of Mat')
+q4 <- ggplot(data=ames, aes(x=as.factor(ExterCond))) +
+        geom_bar(stat='count')+labs(x='External Condition of Mat')
+q5 <- ggplot(data=ames, aes(x=as.factor(HeatingQC))) +
+        geom_bar(stat='count')+labs(x='Heating Quality')
+q6 <- ggplot(data=ames, aes(x=as.factor(KitchenQual))) +
+        geom_bar(stat='count')+labs(x='Kitchen Quality')
+q7 <- ggplot(data=ames, aes(x=as.factor(FireplaceQu))) +
+        geom_bar(stat='count')+labs(x='Fireplace Quality')
+q8 <- ggplot(data=ames, aes(x=as.factor(GarageQual))) +
+        geom_bar(stat='count')+labs(x='Garage Quality')
+q9 <- ggplot(data=ames, aes(x=as.factor(GarageCond))) +
+        geom_bar(stat='count')+labs(x='Garage Condition')
+q10 <- ggplot(data=ames, aes(x=as.factor(PoolQC))) +
+        geom_bar(stat='count')+labs(x='Pool Quality')
+q11 <- ggplot(data=ames, aes(x=as.factor(Street))) +
+        geom_bar(stat='count')+labs(x='Street Paved or Gravel')
+q12 <- ggplot(data=ames, aes(x=as.factor(LotShape))) +
+        geom_bar(stat='count')+labs(x='Lot Shapes')
+q13 <- ggplot(data=ames, aes(x=as.factor(LandSlope))) +
+        geom_bar(stat='count')+labs(x='Land Slope')
+q14 <- ggplot(data=ames, aes(x=as.factor(MasVnrType))) +
+        geom_bar(stat='count')+labs(x='Masonary Veneer Type')
+q15 <- ggplot(data=ames, aes(x=as.factor(CentralAir))) +
+        geom_bar(stat='count')+labs(x='Central Air')
+q16 <- ggplot(data=ames, aes(x=as.factor(Functional))) +
+        geom_bar(stat='count')+labs(x='Home Functionality(Deductions)')
+
+grid.arrange(q1,q2,q3,q4,q5,q6,q7,q8,q9,q10, q11, q12, q13,q14,q15,q16)
+
+```
+From the Plots we can see that GarageCond and GarageQual are the same, PoolQC is mostly zero except for 10 Pools that are non zero. Most Streets are Paved expect 12. 
+
+  + Basement Quality Variables 
+  
+```{r}
+b1 <- ggplot(data=ames, aes(x=as.factor(BsmtQual))) +
+        geom_bar(stat='count')+labs(x='Basment Quality of Ht of Basement')
+b2 <- ggplot(data=ames, aes(x=as.factor(BsmtCond))) +
+        geom_bar(stat='count')+labs(x='Basement Condition')
+b3 <- ggplot(data=ames, aes(x=as.factor(BsmtExposure))) +
+        geom_bar(stat='count')+labs(x='Basement Exposure')
+b4 <- ggplot(data=ames, aes(x=as.factor(BsmtFinType1))) +
+        geom_bar(stat='count')+labs(x='Basement Finish Type1')
+b5 <- ggplot(data=ames, aes(x=as.factor(BsmtFinType2))) +
+        geom_bar(stat='count')+labs(x='Basement Finish Type2')
+grid.arrange(b1,b2,b3,b4,b5)
+```
+
+## Part-7 : Feature Engineering
+
+### 7.1 Total number of Bathrooms
+
+There are 4 bathroom variables. Adding them can make a strong predictor.
+```{r}
+ames$TotBaths <- ames$FullBath + (ames$HalfBath*0.5) + 
+  ames$BsmtFullBath + (ames$BsmtHalfBath*0.5)
+
+cor(ames$SalePrice[!is.na(ames$SalePrice)], ames$TotBaths[!is.na(ames$SalePrice)])
+
+ggplot(data=ames[!is.na(ames$SalePrice),], aes(x=as.factor(TotBaths), y=SalePrice, color=as.factor(TotBaths)))+ ggtitle("Plot of Total Baths with SalePrice") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_point() +guides(color=FALSE)+ labs(x="Total Bathrooms")+
+  geom_smooth(method = "lm", se=FALSE, color="blue", aes(group=1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=100000), labels = comma)+
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) 
+
+# Labels show the number of baths in train dataset.
+```
+The correlation has increased to 0.63.
+
+### 7.2 Variables related to age of the house and remodelling activities
+
+The variables are YearBlt, YearRemodAdd, and YearSold.
+YearRemodAdd defaults to YearBuilt,if there has been no Remodeling/Addition.
+YearRemodeled and YearSold can be used to determine the Age and adding Remodeled Yes/No variable
+```{r}
+ames$Remod <- ifelse(ames$YearBuilt==ames$YearRemodAdd, 0, 1)
+# 0=No Remodeling, 1=Remodeling
+table(ames$Remod)
+
+ames$HAge <- as.numeric(ames$YrSold)-ames$YearRemodAdd
+summary(ames$HAge)
+
+ggplot(data=ames[!is.na(ames$SalePrice),], aes(x=HAge, y=SalePrice, color=HAge))+
+  geom_point() + geom_smooth(method = "lm", se=FALSE, color="blue", aes(group=1)) +
+  ggtitle("Plot of House Age with SalePrice") +
+  theme(plot.title = element_text(hjust = 0.5))+ labs(x="Age of House wrt Yr Remodelled/Yr Built", y="Sale Price($)")+
+  scale_y_continuous(breaks= seq(0, 800000, by=100000), labels = comma)+
+  guides(color=FALSE)
+
+cor(ames$SalePrice[!is.na(ames$SalePrice)], ames$HAge[!is.na(ames$SalePrice)])
+#Shows negative correlation of -0.50
+
+ggplot(ames[!is.na(ames$SalePrice),], aes(x=as.factor(Remod), y=SalePrice, color=as.factor(Remod))) +
+  geom_bar(stat='summary', fun.y = "median") + labs(x="Remodelled No/Yes")+
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=6) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  theme_grey(base_size = 18) + guides(color=FALSE)+
+  geom_hline(yintercept=163000, linetype="dashed")
+#dashed line is median SalePrice
+
+# Houses Remodelled are also worth less as well
+
+ames$NewH<- ifelse(ames$YrSold==ames$YearBuilt, 1, 0)
+table(ames$NewH)
+# NewH variable. Altogether, there are 116 new houses in the dataset.
+
+ggplot(ames[!is.na(ames$SalePrice),], aes(x=as.factor(NewH), y=SalePrice, color=as.factor(NewH))) +
+  geom_bar(stat='summary', fun.y = "median") +guides(color=FALSE)+
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=6) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  theme_grey(base_size = 18) + labs(x="New House: Year Built=Year Sold")+
+  geom_hline(yintercept=163000, linetype="dashed") 
+#dashed line is median SalePrice
+
+# Half of the houses are on the Test set.
+# Newer houses are fetching higher prices.
+
+
+# Finally, converting YrSold to factor
+ames$YrSold <- as.factor(ames$YrSold)
+str(ames$YrSold)
+summary(ames$YrSold) # Houses sold in 5 years i.e. 2006, 2007, 2008, 2009 and 2010
+```
+
+### 7.3 Variables related to Area of house 
+
+```{r}
+summary(ames$GrLivArea)
+summary(ames$TotalBsmtSF)
+
+ames$TotalSqFt <- ames$GrLivArea + ames$TotalBsmtSF
+summary(ames$TotalSqFt)
+
+ggplot(data=ames[!is.na(ames$SalePrice),], aes(x=TotalSqFt, y=SalePrice))+
+  ggtitle("Plot of Total Area of House in sq. ft. with SalePrice") + 
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_point(col='blue') + geom_smooth(method = "lm", se=FALSE, color="black", aes(group=1)) + scale_y_continuous(breaks= seq(0, 800000, by=100000), labels = comma)
+
+cor(ames$SalePrice, ames$TotalSqFt, use= "pairwise.complete.obs")
+# High Correlation of 0.778
+```
+
+### 7.4 Consolidating Porch variables
+
+```{r}
+# Leaving wooden deck as it is unsheltered.
+
+ames$TotalPorchSF <- ames$OpenPorchSF + ames$EnclosedPorch + ames$X3SsnPorch + ames$ScreenPorch
+cor(ames$SalePrice, ames$TotalPorchSF, use = "pairwise.complete.obs")
+
+# 0.19,doesn't increase correlation much 
+ggplot(data=ames[!is.na(ames$SalePrice),], aes(x=TotalPorchSF, y=SalePrice))+
+  ggtitle("Plot of Total Porch Area in sq. ft. with SalePrice") + 
+  theme(plot.title = element_text(hjust = 0.5))+ labs(x="Total Porch Area in Sq. Ft.")+
+  geom_point(col='purple') + geom_smooth(method = "lm", se=FALSE, color="black", aes(group=1)) + scale_y_continuous(breaks= seq(0, 800000, by=100000), labels = comma)
+```
+
+## Part-8 : Removing Outliers
+
+```{r}
+# Removing those observations having comparatively higher area but less SalePrice
+which(ames[,84] > 7000) #Find variable Number
+
+#Remove by variable Id number for train dataset
+
+ames <- ames[-c(524, 1299),]
+
+# These values will be removed from analysis of the dataset. 
+# ames <- filter(ames, TotalSqFt<8000)
+# which(names(ames)%in%c("SalePrice"))
+
+cor(ames$SalePrice, ames$TotalSqFt, use= "pairwise.complete.obs")
+# Results in High Correlation of 0.82
+```
+Saving File again  
+```{r}
+labels <- labels[-c(524, 1299)]
+ames$Id <- labels
+str(ames) 
+write.csv(ames, "ames_cleaned.csv") 
+
+getwd()
+```
+
+
+
+
+
